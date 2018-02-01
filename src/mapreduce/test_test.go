@@ -162,7 +162,7 @@ func TestSequentialMany(t *testing.T) {
 
 func TestParallelBasic(t *testing.T) {
 	mr := setup()
-	for i := 0; i < 2; i++ {
+	for i := 100; i < 102; i++ {
 		go RunWorker(mr.address, port(i),
 			MapFunc, ReduceFunc, -1, nil)
 	}
@@ -175,7 +175,7 @@ func TestParallelBasic(t *testing.T) {
 func TestParallelCheck(t *testing.T) {
 	mr := setup()
 	parallelism := &Parallelism{}
-	for i := 0; i < 2; i++ {
+	for i := 20; i < 22; i++ {
 		go RunWorker(mr.address, port(i),
 			MapFunc, ReduceFunc, -1, parallelism)
 	}
@@ -195,9 +195,9 @@ func TestParallelCheck(t *testing.T) {
 func TestOneFailure(t *testing.T) {
 	mr := setup()
 	// Start 2 workers that fail after 10 tasks
-	go RunWorker(mr.address, port(0),
+	go RunWorker(mr.address, port(50),
 		MapFunc, ReduceFunc, 10, nil)
-	go RunWorker(mr.address, port(1),
+	go RunWorker(mr.address, port(51),
 		MapFunc, ReduceFunc, -1, nil)
 	mr.Wait()
 	check(t, mr.files)
@@ -207,7 +207,7 @@ func TestOneFailure(t *testing.T) {
 
 func TestManyFailures(t *testing.T) {
 	mr := setup()
-	i := 0
+	i := 10
 	done := false
 	for !done {
 		select {
