@@ -107,7 +107,7 @@ func Distributed(jobName string, files []string, nreduce int, master string) (mr
 	mr.startRPCServer()
 	go mr.run(jobName, files, nreduce,
 		func(phase jobPhase) {
-			ch := make(chan string,len(files))
+			ch := make(chan string)
 			go mr.forwardRegistrations(ch)
 			schedule(mr.jobName, mr.files, mr.nReduce, phase, ch)
 		},

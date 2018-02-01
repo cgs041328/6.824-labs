@@ -48,11 +48,14 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 				args.TaskNumber = taskNum
 	
 				ok := call(worker, "Worker.DoTask",&args,new (struct{}))
-				if ok {			
-					registerChan <- worker
+				if ok {		
+					fmt.Printf("called%d\n", taskNum)					
+					go func(){
+						registerChan <- worker
+					}() 
 					break
 				} 
-			}
+			}	
 		}(i)
 	}
 	wg.Wait()
