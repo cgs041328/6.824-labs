@@ -23,7 +23,11 @@ import "labrpc"
 // import "bytes"
 // import "labgob"
 
-
+const(
+	Leader = iota
+	Candidate
+	Follower
+)
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -42,6 +46,11 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+type LogEntry struct{
+	Term int
+	Command interface{}
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -54,17 +63,26 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
+	state int
+	//persistent state on all server
+	currentTerm int
+	votedFor int
+	log	[]LogEntry
 
+	//volatile state on all servers
+	commitIndex int
+	lastApplied int
+
+	//volatile state on leader
+	nextIndex []int
+	matchIndex []int
 }
 
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
-	var term int
-	var isleader bool
 	// Your code here (2A).
-	return term, isleader
+	return rf.currentTerm, rf.state == Leader
 }
 
 
@@ -115,6 +133,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	term int
+	candidateId int
+	lastLogIndex int
+	lastLogTerm int	
 }
 
 //
@@ -123,6 +145,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	term int
+	voteGranted bool
 }
 
 //
