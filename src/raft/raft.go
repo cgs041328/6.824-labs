@@ -19,9 +19,9 @@ package raft
 
 import (
 	"sync"
-	 "labrpc"
-	 "time"
-	 "math/rand"
+	"labrpc"
+	"time"
+	"math/rand"
 )
 // import "bytes"
 // import "labgob"
@@ -249,9 +249,12 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			return ok
 		}
 		if reply.VoteGranted {
+
 			rf.voteCount++
+			DPrintf("%d",rf.voteCount)
 			if  rf.voteCount > len(rf.peers)/2 {
 				rf.leaderc <- true
+				rf.state = Leader
 			}
 		}
 	}
@@ -294,7 +297,7 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
-
+	rf.heartBeatc <- true
 }
 
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool{
@@ -303,7 +306,15 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
 }
 
 func (rf *Raft) broadcastAppendEntries() {
-
+	var args AppendEntriesArgs
+	for i := range rf.peers {
+		if i != rf.me && rf.state == Leader {
+			go func(i int) {
+				var reply AppendEntriesReply
+				rf.sendAppendEntries(i, args, &reply)
+			}(i)
+		}
+	}
 }
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -358,12 +369,13 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.state = Follower
 	rf.heartbeatTimeout = 50
-	rf.electionTimeout = 300
+	rf.electionTimeout = 200
 	rf.randomizedElectionTimeout = rf.electionTimeout + globalRand.Intn(rf.electionTimeout)
 	rf.votedFor = -1
 	rf.heartBeatc = make(chan bool,len(peers))
 	rf.grantVotec = make(chan bool,len(peers))
 	rf.leaderc = make(chan bool,len(peers))
+	rf.log = append(rf.log, LogEntry{Term: 0})
 
 	// Your initialization code here (2A, 2B, 2C).
 	go func(){
