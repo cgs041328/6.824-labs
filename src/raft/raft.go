@@ -51,6 +51,7 @@ type ApplyMsg struct {
 
 type LogEntry struct{
 	Term int
+	Index int
 	Command interface{}
 }
 
@@ -85,6 +86,7 @@ type Raft struct {
 	state int
 	heartBeatc chan bool
 	grantVotec chan bool
+	leaderc chan bool
 	voteCount int
 	heartbeatTimeout int
 	electionTimeout  int
@@ -175,11 +177,32 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
+func (rf *Raft) lastIndex() int {
+	return rf.log[len(rf.log) - 1].Index
+}
+func (rf *Raft) lastTerm() int {
+	return rf.log[len(rf.log) - 1].Term
+}
+
+func(rf *Raft) isUpToDate(term,index int) bool{
+	return term > rf.lastTerm() || (term == rf.lastTerm() && index >= rf.lastIndex())
+}
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	reply.Term = rf.currentTerm
+	if(args.Term < rf.currentTerm){
+		return
+	}
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && rf.isUpToDate(args.LastLogTerm,args.LastLogIndex){
+		rf.grantVotec <- true
+		rf.currentTerm = args.Term
+		rf.state = Follower
+		rf.votedFor = args.CandidateId
+		reply.VoteGranted = true
+	}
 }
 
 //
@@ -213,10 +236,44 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if ok {
+		if rf.state != Candidate || args.Term != rf.currentTerm {
+			return ok
+		}
+		if reply.Term > rf.currentTerm {
+			rf.currentTerm = reply.Term
+			rf.state = Follower
+			rf.votedFor = -1
+			return ok
+		}
+		if reply.VoteGranted {
+			rf.voteCount++
+			if  rf.voteCount > len(rf.peers)/2 {
+				rf.leaderc <- true
+			}
+		}
+	}
 	return ok
 }
 func (rf *Raft) broadcastRequestVote() {
+	var args RequestVoteArgs
+	rf.mu.Lock()
+	args.Term = rf.currentTerm
+	args.CandidateId = rf.me
+	args.LastLogTerm = rf.lastTerm()
+	args.LastLogIndex = rf.lastIndex()
+	rf.mu.Unlock()
 
+	for i := range rf.peers {
+		if i != rf.me && rf.state == Candidate {
+			go func(i int) {
+				var reply RequestVoteReply
+				rf.sendRequestVote(i, &args, &reply)
+			}(i)
+		}
+	}
 }
 
 type AppendEntriesArgs struct {
@@ -303,6 +360,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.heartbeatTimeout = 50
 	rf.electionTimeout = 300
 	rf.randomizedElectionTimeout = rf.electionTimeout + globalRand.Intn(rf.electionTimeout)
+	rf.votedFor = -1
+	rf.heartBeatc = make(chan bool,len(peers))
+	rf.grantVotec = make(chan bool,len(peers))
+	rf.leaderc = make(chan bool,len(peers))
 
 	// Your initialization code here (2A, 2B, 2C).
 	go func(){
@@ -321,6 +382,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 				rf.votedFor = rf.me
 				rf.voteCount = 1
 				rf.mu.Unlock()
+				go rf.broadcastRequestVote()
+				select{
+				case <-rf.heartBeatc:
+					rf.state = Follower
+				case <-time.After(time.Duration(rf.randomizedElectionTimeout) * time.Millisecond):
+				case <-rf.leaderc:
+					rf.state = Leader
+				}
 			case Leader:
 				rf.broadcastAppendEntries()
 				time.Sleep(time.Duration(rf.heartbeatTimeout) * time.Millisecond)
