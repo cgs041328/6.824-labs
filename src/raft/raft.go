@@ -133,10 +133,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term int
-	candidateId int
-	lastLogIndex int
-	lastLogTerm int	
+	Term int
+	CandidateId int
+	LastLogIndex int
+	LastLogTerm int	
 }
 
 //
@@ -145,8 +145,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term int
-	voteGranted bool
+	Term int
+	VoteGranted bool
 }
 
 //
@@ -242,9 +242,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.state = Follower
 
 	// Your initialization code here (2A, 2B, 2C).
+	go func(){
+		for {
+			switch rf.state {
+			case Follower:
 
+			}
+		}
+	}()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
