@@ -17,9 +17,12 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "labrpc"
-
+import (
+	"sync"
+	 "labrpc"
+	 "time"
+	 "math/rand"
+)
 // import "bytes"
 // import "labgob"
 
@@ -51,6 +54,22 @@ type LogEntry struct{
 	Command interface{}
 }
 
+type lockedRand struct {
+	mu   sync.Mutex
+	rand *rand.Rand
+}
+
+func (r *lockedRand) Intn(n int) int {
+	r.mu.Lock()
+	v := r.rand.Intn(n)
+	r.mu.Unlock()
+	return v
+}
+
+var globalRand = &lockedRand{
+	rand: rand.New(rand.NewSource(time.Now().UnixNano())),
+}
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -64,6 +83,13 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	state int
+	heartBeatc chan bool
+	grantVotec chan bool
+	voteCount int
+	heartbeatTimeout int
+	electionTimeout  int
+	randomizedElectionTimeout int
+
 	//persistent state on all server
 	currentTerm int
 	votedFor int
@@ -189,8 +215,39 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
+func (rf *Raft) broadcastRequestVote() {
 
+}
 
+type AppendEntriesArgs struct {
+	// Your data here.
+	Term int
+	LeaderId int
+	PrevLogTerm int
+	PrevLogIndex int
+	Entries []LogEntry
+	LeaderCommit int
+}
+
+type AppendEntriesReply struct {
+	// Your data here.
+	Term int
+	Success bool
+	NextIndex int
+}
+
+func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
+
+}
+
+func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool{
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	return ok
+}
+
+func (rf *Raft) broadcastAppendEntries() {
+
+}
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -243,13 +300,30 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.state = Follower
+	rf.heartbeatTimeout = 50
+	rf.electionTimeout = 300
+	rf.randomizedElectionTimeout = rf.electionTimeout + globalRand.Intn(rf.electionTimeout)
 
 	// Your initialization code here (2A, 2B, 2C).
 	go func(){
 		for {
 			switch rf.state {
 			case Follower:
-
+				select{
+				case <-rf.heartBeatc:
+				case <-rf.grantVotec:
+				case <-time.After(time.Duration(rf.randomizedElectionTimeout) * time.Millisecond):
+					rf.state = Candidate
+				}
+			case Candidate:
+				rf.mu.Lock()
+				rf.currentTerm++
+				rf.votedFor = rf.me
+				rf.voteCount = 1
+				rf.mu.Unlock()
+			case Leader:
+				rf.broadcastAppendEntries()
+				time.Sleep(time.Duration(rf.heartbeatTimeout) * time.Millisecond)
 			}
 		}
 	}()
