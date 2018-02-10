@@ -254,7 +254,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 			DPrintf("%d",rf.voteCount)
 			if  rf.voteCount > len(rf.peers)/2 {
 				rf.leaderc <- true
-				rf.state = Leader
 			}
 		}
 	}
@@ -368,8 +367,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	rf.state = Follower
-	rf.heartbeatTimeout = 50
-	rf.electionTimeout = 200
+	rf.heartbeatTimeout = 100
+	rf.electionTimeout = 400
 	rf.randomizedElectionTimeout = rf.electionTimeout + globalRand.Intn(rf.electionTimeout)
 	rf.votedFor = -1
 	rf.heartBeatc = make(chan bool,len(peers))
