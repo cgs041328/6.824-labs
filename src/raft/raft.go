@@ -334,8 +334,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	index = -1
+	term = rf.currentTerm
+	isLeader = rf.state == Leader
+	if isLeader {
+		index = rf.lastIndex() + 1
+		rf.log = append(rf.log, LogEntry{Term:term,Command:command,Index:index})
+		rf.persist()
+	}
+	
 	return index, term, isLeader
 }
 
@@ -399,7 +408,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 					rf.state = Follower
 				case <-time.After(time.Duration(rf.randomizedElectionTimeout) * time.Millisecond):
 				case <-rf.leaderc:
+					rf.mu.Lock()
 					rf.state = Leader
+					rf.nextIndex = make([]int,len(rf.peers))
+					rf.matchIndex = make([]int,len(rf.peers))
+					for i := range rf.peers {
+						rf.nextIndex[i] = rf.lastIndex() + 1
+					}
+					rf.mu.Unlock()
 				}
 			case Leader:
 				rf.broadcastAppendEntries()
