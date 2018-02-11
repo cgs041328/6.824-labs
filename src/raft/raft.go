@@ -87,6 +87,7 @@ type Raft struct {
 	heartBeatc chan bool
 	grantVotec chan bool
 	leaderc chan bool
+	commitc chan bool
 	voteCount int
 	heartbeatTimeout int
 	electionTimeout  int
@@ -262,6 +263,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) broadcastRequestVote() {
 	var args RequestVoteArgs
 	rf.mu.Lock()
+	rf.currentTerm++
+	rf.votedFor = rf.me
+	rf.voteCount = 1
 	args.Term = rf.currentTerm
 	args.CandidateId = rf.me
 	args.LastLogTerm = rf.lastTerm()
@@ -296,7 +300,51 @@ type AppendEntriesReply struct {
 }
 
 func (rf *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	rf.heartBeatc <- true
+	reply.Term = rf.currentTerm
+
+	if args.Term < rf.currentTerm {
+		return
+	}
+	lastLogIndex := rf.lastIndex()
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		reply.Term = rf.currentTerm
+	}	
+
+	if args.PrevLogIndex > lastLogIndex {
+		reply.NextIndex = lastLogIndex + 1
+		return
+	}
+	term := rf.lastTerm()
+	if term != args.PrevLogTerm {
+		var i int
+		for i = args.PrevLogIndex - 1; i >= rf.commitIndex; i-- {
+			if rf.log[i].Term != term {
+				break
+			}
+		}
+		reply.NextIndex = i + 1
+		return
+	}
+	rf.log = rf.log[: args.PrevLogIndex+1]
+	rf.log = append(rf.log, args.Entries...)
+	reply.Success = true
+	reply.NextIndex = rf.lastIndex() + 1
+	if args.LeaderCommit > rf.commitIndex {
+		last := rf.lastIndex()
+		if args.LeaderCommit > last {
+			rf.commitIndex = last
+		} else {
+			rf.commitIndex = args.LeaderCommit
+		}
+		rf.commitc <- true
+	}
+	return
 }
 
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool{
@@ -305,12 +353,49 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *App
 }
 
 func (rf *Raft) broadcastAppendEntries() {
-	var args AppendEntriesArgs
+	count := 1
 	for i := range rf.peers {
 		if i != rf.me && rf.state == Leader {
 			go func(i int) {
+				nextIndex := rf.nextIndex[i]
+					args := AppendEntriesArgs{LeaderId: rf.me, LeaderCommit: rf.commitIndex, Term: rf.currentTerm, PrevLogTerm: -1}
+					args.PrevLogIndex = nextIndex - 1
+					if args.PrevLogIndex > -1 {
+						args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+					}
+					if nextIndex < rf.lastIndex() + 1 {
+						args.Entries = rf.log[nextIndex:rf.lastIndex() + 1]
+					}
 				var reply AppendEntriesReply
-				rf.sendAppendEntries(i, args, &reply)
+				ok := rf.sendAppendEntries(i, args, &reply)
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				if ok {
+					if rf.state != Leader || args.Term != rf.currentTerm {
+						return 
+					}
+			
+					if reply.Term > rf.currentTerm {
+						rf.currentTerm = reply.Term
+						rf.state = Follower
+						rf.votedFor = -1
+						rf.persist()
+						return 
+					}
+					if reply.Success {
+						if len(args.Entries) > 0 {
+							rf.nextIndex[i] = args.Entries[len(args.Entries) - 1].Index + 1
+							rf.matchIndex[i] = rf.nextIndex[i] - 1
+							if count == (len(rf.peers) / 2) {
+								rf.commitIndex = rf.lastIndex()
+								rf.commitc <- true
+							}
+							count++
+						}
+					} else {
+						rf.nextIndex[i] = reply.NextIndex
+					}
+				}
 			}(i)
 		}
 	}
@@ -344,7 +429,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.log = append(rf.log, LogEntry{Term:term,Command:command,Index:index})
 		rf.persist()
 	}
-	
+
 	return index, term, isLeader
 }
 
@@ -397,11 +482,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 					rf.state = Candidate
 				}
 			case Candidate:
-				rf.mu.Lock()
-				rf.currentTerm++
-				rf.votedFor = rf.me
-				rf.voteCount = 1
-				rf.mu.Unlock()
 				go rf.broadcastRequestVote()
 				select{
 				case <-rf.heartBeatc:
@@ -420,6 +500,23 @@ func Make(peers []*labrpc.ClientEnd, me int,
 			case Leader:
 				rf.broadcastAppendEntries()
 				time.Sleep(time.Duration(rf.heartbeatTimeout) * time.Millisecond)
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case <-rf.commitc:
+				rf.mu.Lock()
+			  commitIndex := rf.commitIndex
+				baseIndex := rf.log[0].Index
+				for i := rf.lastApplied + 1; i <= commitIndex; i++ {
+					msg := ApplyMsg{CommandIndex: i, Command: rf.log[i-baseIndex].Command}
+					applyCh <- msg
+					rf.lastApplied = i
+				}
+				rf.mu.Unlock()
 			}
 		}
 	}()
